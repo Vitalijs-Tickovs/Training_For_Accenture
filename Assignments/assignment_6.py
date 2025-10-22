@@ -27,6 +27,12 @@ from sklearn.model_selection import TimeSeriesSplit, cross_val_score, GridSearch
 from sklearn.metrics import roc_auc_score
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 
+try:
+    from xgboost import XGBClassifier
+    HAS_XGBOOST = True
+except ImportError:
+    HAS_XGBOOST = False
+
 
 PATH_TO_DATA = '../mlcourse.ai_Dataset/alice/'  # change if needed
 AUTHOR = 'Vitalijs_Tickovs' # change here to <name>_<surname>
@@ -39,6 +45,32 @@ MAX_FEATURES = 70000    # max features for "bag of sites"
 BEST_LOGIT_C = 5.45559  # precomputed tuned C for logistic regression
 LOGIT_C_GRID = [3.0, BEST_LOGIT_C, 7.5, 10.0, 12.0]
 SGD_ALPHA_GRID = [1e-6, 3e-6, 1e-5]
+if HAS_XGBOOST:
+    XGB_PARAM_GRID = [
+        {
+            'n_estimators': [200],
+            'learning_rate': [0.1],
+            'max_depth': [4],
+            'subsample': [0.9],
+            'colsample_bytree': [0.9],
+        },
+        {
+            'n_estimators': [300],
+            'learning_rate': [0.05],
+            'max_depth': [6],
+            'subsample': [0.8],
+            'colsample_bytree': [0.8],
+        },
+        {
+            'n_estimators': [400],
+            'learning_rate': [0.03],
+            'max_depth': [7],
+            'subsample': [0.85],
+            'colsample_bytree': [0.85],
+        },
+    ]
+else:
+    XGB_PARAM_GRID = []
  
 
 # nice way to report running times
@@ -202,38 +234,58 @@ def add_features(times, site_ids):
 
 def select_best_model(X_train, y_train, cv):
     candidate_models = [
-        (
-            'logit_liblinear',
-            LogisticRegression(random_state=SEED, solver='liblinear', max_iter=2000),
-            {
-                'C': LOGIT_C_GRID,
-                'penalty': ['l1', 'l2'],
-                'class_weight': [None, 'balanced'],
-            },
-        ),
-        (
-            'logit_saga',
-            LogisticRegression(random_state=SEED, solver='saga', max_iter=3000),
-            [
-                {'C': LOGIT_C_GRID, 'penalty': ['l2'], 'class_weight': [None, 'balanced']},
-                {'C': LOGIT_C_GRID, 'penalty': ['l1'], 'class_weight': [None, 'balanced']},
-                {'C': LOGIT_C_GRID, 'penalty': ['elasticnet'], 'class_weight': [None, 'balanced'],
-                 'l1_ratio': [0.2, 0.5, 0.8]},
-            ],
-        ),
-        (
-            'sgd_logistic',
-            SGDClassifier(loss='log_loss', random_state=SEED, max_iter=5000, tol=1e-3),
-            [
-                {'alpha': SGD_ALPHA_GRID, 'penalty': ['l2']},
-                {'alpha': SGD_ALPHA_GRID, 'penalty': ['elasticnet'], 'l1_ratio': [0.15, 0.5]},
-            ],
-        ),
+         (
+             'logit_liblinear',
+             LogisticRegression(random_state=SEED, solver='liblinear', max_iter=2000),
+             {
+                 'C': LOGIT_C_GRID,
+                 'penalty': ['l1', 'l2'],
+                 'class_weight': [None, 'balanced'],
+             },
+         ),
+         (
+             'logit_saga',
+             LogisticRegression(random_state=SEED, solver='saga', max_iter=3000),
+             [
+                 {'C': LOGIT_C_GRID, 'penalty': ['l2'], 'class_weight': [None, 'balanced']},
+                 {'C': LOGIT_C_GRID, 'penalty': ['l1'], 'class_weight': [None, 'balanced']},
+                 {'C': LOGIT_C_GRID, 'penalty': ['elasticnet'], 'class_weight': [None, 'balanced'],
+                  'l1_ratio': [0.2, 0.5, 0.8]},
+             ],
+         ),
+         (
+             'sgd_logistic',
+             SGDClassifier(loss='log_loss', random_state=SEED, max_iter=5000, tol=1e-3),
+             [
+                 {'alpha': SGD_ALPHA_GRID, 'penalty': ['l2']},
+                 {'alpha': SGD_ALPHA_GRID, 'penalty': ['elasticnet'], 'l1_ratio': [0.15, 0.5]},
+             ],
+         ),
     ]
+
+    if HAS_XGBOOST and XGB_PARAM_GRID:
+        candidate_models.append(
+            (
+                'xgboost',
+                XGBClassifier(
+                    objective='binary:logistic',
+                    eval_metric='auc',
+                    random_state=SEED,
+                    tree_method='hist',
+                    n_jobs=N_JOBS,
+                    use_label_encoder=False,
+                    verbosity=0,
+                ),
+                XGB_PARAM_GRID,
+            ),
+        )
+    elif not HAS_XGBOOST:
+        print('XGBoost not installed. Skipping the XGBoost model.')
 
     best_search = None
     best_name = None
     best_score = -np.inf
+
 
     for name, estimator, param_grid in candidate_models:
         print(f'\nTraining candidate model: {name}')
